@@ -2494,11 +2494,12 @@ trait DeltaErrorsBase
   }
 
   def identityColumnAlterNonDeltaFormatError(): Throwable = {
-    new AnalysisException("ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported by Delta.")
+    new AnalysisException(
+      "ALTER TABLE ALTER/CHANGE COLUMN SYNC IDENTITY is only supported by Delta.")
   }
 
   def identityColumnAlterColumnNotSupported(): Throwable = {
-    new AnalysisException("ALTER TABLE ALTER COLUMN is not supported for IDENTITY columns.")
+    new AnalysisException("ALTER TABLE ALTER/CHANGE COLUMN is not supported for IDENTITY columns.")
   }
 
   def identityColumnReplaceColumnsNotSupported(): Throwable = {

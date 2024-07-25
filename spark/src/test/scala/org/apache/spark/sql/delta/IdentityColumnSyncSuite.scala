@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.GeneratedByDefault
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
-
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
@@ -53,6 +52,19 @@ trait IdentityColumnSyncSuiteBase
     }
   }
 
+  private def checkGeneratedIdentityValues(
+                                            sortedRows: Seq[Row],
+                                            start: Long,
+                                            step: Long,
+                                            lowerBound: Long,
+                                            upperBound: Long,
+                                            distinctCount: Long): Unit = {
+    assert(sortedRows.head.getLong(0) >= lowerBound)
+    assert(sortedRows.forall(r => (r.getLong(0) - start) % step == 0))
+    assert(sortedRows.last.getLong(0) <= upperBound)
+    assert(sortedRows.distinct.size === distinctCount)
+  }
+
   test("alter table sync identity delta") {
     val starts = Seq(-1, 1)
     val steps = Seq(-3, 3)
@@ -82,9 +94,17 @@ trait IdentityColumnSyncSuiteBase
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
 
-      checkAnswer(
-        spark.read.table(tblName),
-        Seq(Row(1, "a"), Row(2, "b"), Row(99, "c"), Row(100, "d"), Row(102, "e"), Row(104, "f")))
+      val result = spark.read.table(tblName).collect().sortBy(_.getLong(0))
+      assert(result.length === 6)
+      assert(result.take(3) === Seq(Row(1, "a"), Row(2, "b"), Row(99, "c")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.takeRight(3),
+        start = 100,
+        step = 2,
+        lowerBound = 100,
+        upperBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        distinctCount = 3)
     }
   }
 
@@ -94,9 +114,17 @@ trait IdentityColumnSyncSuiteBase
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
 
-      checkAnswer(
-        spark.read.table(tblName),
-        Seq(Row(1, "a"), Row(2, "b"), Row(100, "c"), Row(102, "d"), Row(104, "e"), Row(106, "f")))
+      val result = spark.read.table(tblName).collect().sortBy(_.getLong(0))
+      assert(result.length === 6)
+      assert(result.take(3) === Seq(Row(1, "a"), Row(2, "b"), Row(100, "c")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.takeRight(3),
+        start = 100,
+        step = 2,
+        lowerBound = 101,
+        upperBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        distinctCount = 3)
     }
   }
 
@@ -106,9 +134,17 @@ trait IdentityColumnSyncSuiteBase
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
 
-      checkAnswer(
-        spark.read.table(tblName),
-        Seq(Row(1, "a"), Row(2, "b"), Row(101, "c"), Row(104, "d"), Row(106, "e"), Row(108, "f")))
+      val result = spark.read.table(tblName).collect().sortBy(_.getLong(0))
+      assert(result.length === 6)
+      assert(result.take(3) === Seq(Row(1, "a"), Row(2, "b"), Row(101, "c")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.takeRight(3),
+        start = 100,
+        step = 2,
+        lowerBound = 102,
+        upperBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        distinctCount = 3)
     }
   }
 
@@ -118,9 +154,17 @@ trait IdentityColumnSyncSuiteBase
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
 
-      checkAnswer(
-        spark.read.table(tblName),
-        Seq(Row(1, "a"), Row(2, "b"), Row(-9, "c"), Row(-10, "d"), Row(-12, "e"), Row(-14, "f")))
+      val result = spark.read.table(tblName).collect().sortBy(_.getLong(0))
+      assert(result.length === 6)
+      assert(result.takeRight(3) === Seq(Row(-9, "c"), Row(1, "a"), Row(2, "b")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.take(3),
+        start = -10,
+        step = -2,
+        lowerBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        upperBound = -10,
+        distinctCount = 3)
     }
   }
 

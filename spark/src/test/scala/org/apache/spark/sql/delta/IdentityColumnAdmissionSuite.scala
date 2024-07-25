@@ -68,7 +68,7 @@ class IdentityColumnAdmissionSuite
         val ex = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tblName $keyword COLUMN id TYPE ${targetType.sql}")
         }
-        assert(ex.getMessage.contains("ALTER TABLE ALTER COLUMN is not supported"))
+        assert(ex.getMessage.contains("ALTER TABLE ALTER/CHANGE COLUMN is not supported"))
       }
     }
   }

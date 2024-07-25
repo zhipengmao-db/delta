@@ -50,14 +50,16 @@ trait IdentityColumnTestUtils
       generatedAsIdentityType: GeneratedAsIdentityType,
       startsWith: Option[Long],
       incrementBy: Option[Long],
-      tblProperties: Map[String, String] = Map.empty): Unit = {
+      tblProperties: Map[String, String] = Map.empty,
+      colName: String = "id"): Unit = {
     createTable(
       tableName,
       Seq(
         IdentityColumnSpec(
           generatedAsIdentityType,
           startsWith,
-          incrementBy
+          incrementBy,
+          colName
         ),
         TestColumnSpec(colName = "value", dataType = IntegerType)
       ),
@@ -120,7 +122,8 @@ trait IdentityColumnTestUtils
       step: Long,
       minValue: Long,
       maxValue: Long,
-      oldHighWaterMark: Long): Long = {
+      oldHighWaterMark: Long,
+      id: String = "id"): Long = {
     // Check row count.
     checkAnswer(
       sql(s"SELECT COUNT(*) FROM $tableName"),
@@ -128,12 +131,12 @@ trait IdentityColumnTestUtils
     )
     // Check values are unique.
     checkAnswer(
-      sql(s"SELECT COUNT(DISTINCT id) FROM $tableName"),
+      sql(s"SELECT COUNT(DISTINCT $id) FROM $tableName"),
       Row(expectedRowCount)
     )
     // Check values follow start and step configuration.
     checkAnswer(
-      sql(s"SELECT COUNT(*) FROM $tableName WHERE (id - $start) % $step != 0"),
+      sql(s"SELECT COUNT(*) FROM $tableName WHERE ($id - $start) % $step != 0"),
       Row(0)
     )
     // Check values generated in this batch are after previous high water mark.
@@ -142,13 +145,13 @@ trait IdentityColumnTestUtils
         s"""
            |SELECT COUNT(*) FROM $tableName
            |  WHERE (value BETWEEN $minValue and $maxValue)
-           |    AND ((id - $oldHighWaterMark) / $step < 0)
+           |    AND (($id - $oldHighWaterMark) / $step < 0)
            |""".stripMargin),
       Row(0)
     )
     // Update high water mark.
     val func = if (step > 0) "MAX" else "MIN"
-    sql(s"SELECT $func(id) FROM $tableName").collect().head.getLong(0)
+    sql(s"SELECT $func($id) FROM $tableName").collect().head.getLong(0)
   }
 }
 

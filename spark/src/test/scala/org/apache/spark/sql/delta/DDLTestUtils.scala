@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{DataType, LongType, StructField}
@@ -90,8 +89,18 @@ case class IdentityColumnSpec(
   extends ColumnSpec {
 
   override def ddl: String = {
-    throw new UnsupportedOperationException(
-      "DDL generation is not supported for identity columns yet")
+    val generatedStr = generatedAsIdentityType match {
+      case GeneratedAsIdentityType.GeneratedAlways => "ALWAYS"
+      case GeneratedAsIdentityType.GeneratedByDefault => "BY DEFAULT"
+    }
+
+    val startsWithStr = startsWith.map(step => s"START WITH $step").getOrElse("")
+    val incrementByStr = incrementBy.map(step => s"INCREMENT BY $step").getOrElse("")
+    val identitySpec = s"($startsWithStr $incrementByStr)"
+
+    val commentStr = comment.map(c => s""" COMMENT "$c"""").getOrElse("")
+
+    s"$colName ${dataType.sql} GENERATED $generatedStr AS IDENTITY $identitySpec$commentStr"
   }
 
   override def structField(spark: SparkSession): StructField = {

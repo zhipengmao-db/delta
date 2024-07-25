@@ -40,8 +40,8 @@ trait IdentityColumnDMLSuiteBase
   protected val tblName = "identity_test"
 
   test("merge with insert and update") {
-    val source = "identity_test_src"
-    val target = "identity_test_tgt"
+    val source = "identity_test_src" + System.currentTimeMillis()
+    val target = "identity_test_tgt" + System.currentTimeMillis() + 1
     val start = 1L
     val step = 2L
     Seq(true, false).foreach { v =>
@@ -56,18 +56,24 @@ trait IdentityColumnDMLSuiteBase
               TestColumnSpec(colName = "value2", dataType = IntegerType)
             )
           )
+          val id = "id10"
           sql(
             s"""
                |INSERT INTO $source VALUES (1, 100), (2, 200), (3, 300)
                |""".stripMargin)
           createTableWithIdColAndIntValueCol(
-            target, GeneratedAlways, startsWith = Some(start), incrementBy = Some(step))
+            target, GeneratedAlways, startsWith = Some(start),
+            incrementBy = Some(step), colName = id)
           sql(
             s"""
                |INSERT INTO $target(value) VALUES (2), (3), (4)
                |""".stripMargin)
-          highWaterMark = validateIdentity(target, 3, start, step, 2, 4, highWaterMark)
-          val idBeforeMerge1 = sql(s"SELECT id FROM $target WHERE value in (2, 3)").collect()
+          highWaterMark = validateIdentity(target, 3, start, step, 2, 4, highWaterMark, id)
+          val idBeforeMerge1 = sql(s"SELECT $id FROM $target WHERE value in (2, 3)").collect()
+
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(target))
+          // scalastyle:off
+          println("datapath: ", deltaLog.dataPath)
 
           sql(
             s"""
@@ -76,14 +82,14 @@ trait IdentityColumnDMLSuiteBase
                |  WHEN MATCHED THEN UPDATE SET $target.value = $source.value2
                |  WHEN NOT MATCHED THEN INSERT (value) VALUES ($source.value2)
                |""".stripMargin)
-          highWaterMark = validateIdentity(target, 4, start, step, 100, 100, highWaterMark)
+          highWaterMark = validateIdentity(target, 4, start, step, 100, 100, highWaterMark, id)
           // IDENTITY values for updated rows shouldn't change.
           checkAnswer(
-            sql(s"SELECT id FROM $target WHERE value in (200, 300)"),
+            sql(s"SELECT $id FROM $target WHERE value in (200, 300)"),
             idBeforeMerge1
           )
           val idBeforeMerge2 =
-            sql(s"SELECT id FROM $target WHERE value in (100, 300, 4)").collect()
+            sql(s"SELECT $id FROM $target WHERE value in (100, 300, 4)").collect()
 
           sql(s"INSERT OVERWRITE $source VALUES(200, 2000), (4, 400), (5, 500)")
           sql(
@@ -94,10 +100,10 @@ trait IdentityColumnDMLSuiteBase
                |  WHEN MATCHED THEN UPDATE SET $target.value = $source.value2
                |  WHEN NOT MATCHED THEN INSERT (value) VALUES ($source.value2)
                |""".stripMargin)
-          highWaterMark = validateIdentity(target, 4, start, step, 500, 500, highWaterMark)
+          highWaterMark = validateIdentity(target, 4, start, step, 500, 500, highWaterMark, id)
           // IDENTITY values for updated rows shouldn't change.
           checkAnswer(
-            sql(s"SELECT id FROM $target WHERE value in (100, 300, 400)"),
+            sql(s"SELECT $id FROM $target WHERE value in (100, 300, 400)"),
             idBeforeMerge2
           )
         }
@@ -106,8 +112,8 @@ trait IdentityColumnDMLSuiteBase
   }
 
   test("merge with insert and update and schema evolution") {
-    val source = "identity_test_src"
-    val target = "identity_test_tgt"
+    val source = "identity_test_src" + System.currentTimeMillis()
+    val target = "identity_test_tgt" + System.currentTimeMillis() + 1
     val start = 1L
     val step = 3L
       withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
@@ -124,22 +130,28 @@ trait IdentityColumnDMLSuiteBase
               )
             sql(s"INSERT INTO $source VALUES (4, 44), (9, 99)")
 
+            val id = "id11"
             createTable(
               target,
               Seq(
                 IdentityColumnSpec(
                   GeneratedAlways,
                   startsWith = Some(start),
-                  incrementBy = Some(step)
+                  incrementBy = Some(step),
+                  colName = id
                 ),
                 TestColumnSpec(colName = "id2", dataType = LongType),
                 TestColumnSpec(colName = "value", dataType = IntegerType)
               )
             )
             sql(s"INSERT INTO $target (id2, value) VALUES(1, 1), (4, 4), (7, 7), (10, 10)")
-            highWaterMark = validateIdentity(target, 4, start, step, 1, 10, highWaterMark)
+            highWaterMark = validateIdentity(target, 4, start, step, 1, 10, highWaterMark, id)
 
-            val idBeforeMerge1 = sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 10)")
+              val deltaLog = DeltaLog.forTable(spark, TableIdentifier(target))
+              // scalastyle:off
+              println("datapath: ", deltaLog.dataPath)
+
+            val idBeforeMerge1 = sql(s"SELECT $id FROM $target WHERE id2 in (1, 4, 7, 10)")
             sql(
               s"""
                  |MERGE INTO $target
@@ -147,15 +159,15 @@ trait IdentityColumnDMLSuiteBase
                  |  WHEN NOT MATCHED THEN INSERT *
                  |""".stripMargin)
             checkAnswer(
-              sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 10)"),
+              sql(s"SELECT $id FROM $target WHERE id2 in (1, 4, 7, 10)"),
               idBeforeMerge1
             )
             checkAnswer(
-              sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $target"),
+              sql(s"SELECT COUNT(DISTINCT $id) == COUNT(*) FROM $target"),
               Row(true)
             )
 
-              val idBeforeMerge2 = sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 9, 10)")
+              val idBeforeMerge2 = sql(s"SELECT $id FROM $target WHERE id2 in (1, 4, 7, 9, 10)")
               sql(s"INSERT OVERWRITE $source VALUES(9, 999), (11, 1100)")
               val events = Log4jUsageLogger.track {
                 sql(
@@ -167,11 +179,11 @@ trait IdentityColumnDMLSuiteBase
                      |""".stripMargin)
               }
               checkAnswer(
-                sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 9, 10)"),
+                sql(s"SELECT $id FROM $target WHERE id2 in (1, 4, 7, 9, 10)"),
                 idBeforeMerge2
               )
               checkAnswer(
-                sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $target"),
+                sql(s"SELECT COUNT(DISTINCT $id) == COUNT(*) FROM $target"),
                 Row(true)
               )
               val mergeStats = events.filter { e =>
@@ -191,23 +203,27 @@ trait IdentityColumnDMLSuiteBase
     } {
       withSQLConf(
         DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "false") {
-        val src = "identity_test_src"
-        val tgt = "identity_test_tgt"
+        val src = "identity_test_src" + System.currentTimeMillis()
+        val tgt = "identity_test_tgt" + System.currentTimeMillis() + 1
         withTable(src, tgt) {
           sql(s"DROP TABLE IF EXISTS $tgt")
+          val id = "id12"
           createTable(
             tgt,
             Seq(
               IdentityColumnSpec(
                 GeneratedAlways,
                 startsWith = Some(0),
-                incrementBy = Some(increment)
+                incrementBy = Some(increment),
+                colName = id
               ),
               TestColumnSpec(colName = "col1", dataType = IntegerType)
             )
           )
 
           val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tgt))
+          // scalastyle:off
+          println("datapath: ", deltaLog.dataPath)
           assert(deltaLog.snapshot.version === 0L)
 
           // INSERT 10 rows where each row is inserted into different file.
@@ -216,7 +232,7 @@ trait IdentityColumnDMLSuiteBase
             .repartition(10)
             .write.mode("overwrite").format("delta").saveAsTable(tgt)
           assert(deltaLog.snapshot.version === 1L)
-          assert(highWaterMark(deltaLog.snapshot, "id") === increment * 9L)
+          assert(highWaterMark(deltaLog.snapshot, id) === increment * 9L)
 
           // Create src table with only 1 row having value 5.
           Seq(5).toDF("col1").write.saveAsTable(src)
@@ -232,15 +248,15 @@ trait IdentityColumnDMLSuiteBase
           assert(deltaLog.snapshot.version === 2L)
           // The MERGE query shouldn't change the high watermark as it has not INSERTED any new
           // data.
-          assert(highWaterMark(deltaLog.snapshot, "id") === increment * 9L)
+          assert(highWaterMark(deltaLog.snapshot, id) === increment * 9L)
 
           // Write 10 more rows to the table using single task and make sure that HIGH WATERMARK is
           // moved 10 units in either direction.
           val newDfToWrite = (11 to 20).toDF("col1").repartition(1)
           newDfToWrite.write.format("delta").mode("append").saveAsTable(tgt)
-          assert(highWaterMark(deltaLog.snapshot, "id") === increment * 19L)
+          assert(highWaterMark(deltaLog.snapshot, id) === increment * 19L)
           // validate no duplicate identity values
-          checkAnswer(sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $tgt"), Row(true))
+          checkAnswer(sql(s"SELECT COUNT(DISTINCT $id) == COUNT(*) FROM $tgt"), Row(true))
 
         }
       }
@@ -264,8 +280,8 @@ trait IdentityColumnDMLSuiteBase
       DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "false",
       SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> s"$codegenEnabled"
     ) {
-      val src = "identity_test_src"
-      val tgt = "identity_test_tgt"
+      val src = "identity_test_src" + System.currentTimeMillis()
+      val tgt = "identity_test_tgt" + System.currentTimeMillis() + 1
       withTable(src, tgt) {
         (1 to 10)
           .map(i => (i, i % 2))
@@ -295,6 +311,9 @@ trait IdentityColumnDMLSuiteBase
         )
         sql(s"INSERT INTO $tgt (col1, col2) VALUES (5, 100), (6, 101)")
 
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tgt))
+        // scalastyle:off
+        println("datapath: ", deltaLog.dataPath)
         sql(
           s"""
              | MERGE INTO $tgt tgt USING $src src
@@ -344,13 +363,15 @@ trait IdentityColumnDMLSuiteBase
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
       withTable(table) {
         var highWaterMarkFromData = start - step
+        val id = "id12"
         createTable(
           table,
           Seq(
             IdentityColumnSpec(
               GeneratedAlways,
               startsWith = Some(start),
-              incrementBy = Some(step)
+              incrementBy = Some(step),
+              colName = id
             ),
             TestColumnSpec(colName = "value", dataType = IntegerType),
             TestColumnSpec(colName = "is_odd", dataType = BooleanType),
@@ -360,7 +381,10 @@ trait IdentityColumnDMLSuiteBase
         )
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
 
-        def highWatermarkFromDeltaLog(): Long = highWaterMark(deltaLog.update(), "id")
+        // scalastyle:off
+        println("datapath: ", deltaLog.dataPath)
+
+        def highWatermarkFromDeltaLog(): Long = highWaterMark(deltaLog.update(), id)
 
         Seq(1, 2, 3, 4).toDF()
           .withColumn("is_odd", $"value" % 2 =!= 0)
@@ -377,10 +401,10 @@ trait IdentityColumnDMLSuiteBase
           step = step,
           minValue = 1,
           maxValue = 4,
-          oldHighWaterMark = highWaterMarkFromData)
+          oldHighWaterMark = highWaterMarkFromData, id)
         assert(highWaterMarkFromData === highWatermarkFromDeltaLog())
 
-        val idBeforeReplaceWhere1 = sql(s"SELECT id FROM $table WHERE is_even = true").collect()
+        val idBeforeReplaceWhere1 = sql(s"SELECT $id FROM $table WHERE is_even = true").collect()
 
         Seq(5, 7).toDF()
           .withColumn("is_odd", $"value" % 2 =!= 0)
@@ -399,23 +423,23 @@ trait IdentityColumnDMLSuiteBase
           step = step,
           minValue = 5,
           maxValue = 7,
-          oldHighWaterMark = highWaterMarkFromData)
+          oldHighWaterMark = highWaterMarkFromData, id)
         assert(highWaterMarkFromData === highWatermarkFromDeltaLog())
 
         // IDENTITY values for not-updated shouldn't change.
         checkAnswer(
-          sql(s"SELECT id FROM $table WHERE is_even = true"),
+          sql(s"SELECT $id FROM $table WHERE is_even = true"),
           idBeforeReplaceWhere1
         )
 
         // IDENTITY VALUES for inserted change records and new data should be consistent.
         checkAnswer(
-          sql(s"SELECT id FROM table_changes('$table', 2, 2) " +
+          sql(s"SELECT $id FROM table_changes('$table', 2, 2) " +
             "WHERE is_odd = true and _change_type = 'insert'"),
-          sql(s"SELECT id FROM $table WHERE is_odd = true")
+          sql(s"SELECT $id FROM $table WHERE is_odd = true")
         )
 
-        val idBeforeReplaceWhere2 = sql(s"SELECT id FROM $table WHERE is_odd = true").collect()
+        val idBeforeReplaceWhere2 = sql(s"SELECT $id FROM $table WHERE is_odd = true").collect()
 
         Seq(10, 12).toDF()
           .withColumn("is_odd", $"value" % 2 =!= 0)
@@ -434,24 +458,24 @@ trait IdentityColumnDMLSuiteBase
           step = step,
           minValue = 10,
           maxValue = 12,
-          oldHighWaterMark = highWaterMarkFromData)
+          oldHighWaterMark = highWaterMarkFromData, id)
         assert(highWaterMarkFromData === highWatermarkFromDeltaLog())
         // IDENTITY values for not-updated shouldn't change.
         checkAnswer(
-          sql(s"SELECT id FROM $table WHERE is_odd = true"),
+          sql(s"SELECT $id FROM $table WHERE is_odd = true"),
           idBeforeReplaceWhere2
         )
 
         // IDENTITY VALUES for inserted change records and data should be consistent.
         checkAnswer(
-          sql(s"SELECT id FROM table_changes('$table', 3, 3) " +
+          sql(s"SELECT $id FROM table_changes('$table', 3, 3) " +
             "WHERE is_even = true and _change_type = 'insert'"),
-          sql(s"SELECT id FROM $table WHERE is_even = true")
+          sql(s"SELECT $id FROM $table WHERE is_even = true")
         )
 
         // ReplaceWhere source data contains an Identity Column will be blocked.
         val e = intercept[AnalysisException] {
-          Seq((15, 14), (17, 16)).toDF("id", "value")
+          Seq((15, 14), (17, 16)).toDF(s"$id", "value")
             .withColumn("is_odd", $"value" % 2 =!= 0)
             .withColumn("is_even", $"value" % 2 === 0)
             .coalesce(1)
@@ -462,7 +486,7 @@ trait IdentityColumnDMLSuiteBase
             .saveAsTable(table)
         }
         assert(e.getMessage.contains(
-          "Providing values for GENERATED ALWAYS AS IDENTITY column id is not supported."))
+          s"Providing values for GENERATED ALWAYS AS IDENTITY column $id is not supported."))
       }
     }
   }
@@ -474,8 +498,8 @@ trait IdentityColumnDMLSuiteBase
   }
 
   test("CDF for tables with identity column - MERGE") {
-    val src = "identity_test_src"
-    val tgt = "identity_test_tgt"
+    val src = "identity_test_src" + System.currentTimeMillis()
+    val tgt = "identity_test_tgt" + System.currentTimeMillis() + 1
     withTable(tgt) {
       generateTableWithIdentityColumn(tgt)
       sql(s"ALTER TABLE $tgt SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key}=true)")
@@ -489,13 +513,18 @@ trait IdentityColumnDMLSuiteBase
              |WHEN NOT MATCHED THEN INSERT (target.val) VALUES (src.val)""".stripMargin)
       }
 
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tgt))
+      // scalastyle:off
+      println("datapath: ", deltaLog.dataPath)
+
       checkAnswer(sql(
         s"""SELECT *
            |FROM $tgt
            |ORDER BY key""".stripMargin),
         Seq(
           Row(0, 0), Row(1, 1), Row(2, 2), Row(3, 3),
-          Row(4, 4), Row(5, 5), Row(7, 20), Row(9, 30)))
+          Row(4, 4), Row(5, 5), Row(6, 20), Row(7, 30)))
 
       checkAnswer(sql(
         s"""SELECT key, val, ${CDCReader.CDC_TYPE_COLUMN_NAME}
@@ -504,17 +533,22 @@ trait IdentityColumnDMLSuiteBase
         Seq(
           Row(1, 1, CDCReader.CDC_TYPE_UPDATE_POSTIMAGE),
           Row(1, 1, CDCReader.CDC_TYPE_UPDATE_PREIMAGE),
-          Row(7, 20, CDCReader.CDC_TYPE_INSERT),
-          Row(9, 30, CDCReader.CDC_TYPE_INSERT)))
+          Row(6, 20, CDCReader.CDC_TYPE_INSERT),
+          Row(7, 30, CDCReader.CDC_TYPE_INSERT)))
     }
   }
 
   test("CDF for tables with identity column - UPDATE") {
-    val tgt = "identity_test_tgt"
+    val tgt = "identity_test_tgt" + System.currentTimeMillis()
     withTable(tgt) {
 
       generateTableWithIdentityColumn(tgt)
       sql(s"ALTER TABLE $tgt SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key}=true)")
+
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tgt))
+      // scalastyle:off
+      println("datapath: ", deltaLog.dataPath)
 
       sql(
         s"""UPDATE $tgt
@@ -543,6 +577,7 @@ trait IdentityColumnDMLSuiteBase
     }
   }
 }
+
 
 class IdentityColumnDMLScalaSuite
   extends IdentityColumnDMLSuiteBase

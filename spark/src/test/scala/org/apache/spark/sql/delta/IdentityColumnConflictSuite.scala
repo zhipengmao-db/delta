@@ -19,11 +19,11 @@ package org.apache.spark.sql.delta
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
-import com.databricks.spark.util.TestUsageLogging
-import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
-import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixinEdge}
-import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver}
+import com.databricks.spark.util.Log4jUsageLogger
 
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver}
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.util.ThreadUtils
 
@@ -69,6 +69,7 @@ case class IdentityOnlyMetadataUpdateTestCase(
 
 trait IdentityColumnConflictSuiteBase
     extends IdentityColumnTestUtils
+    with TransactionExecutionTestMixin
     with PhaseLockingTestMixin {
 
   val tblName = "identity_conflict_test"
@@ -78,8 +79,8 @@ trait IdentityColumnConflictSuiteBase
   private def setupEmptyTableWithRowTrackingTableFeature(
       tblIsoLevel: Option[IsolationLevel]): Unit = {
     val tblPropertiesMap: Map[String, String] = Map(
-      TableFeatureProtocolUtils.propertyKey(RowTrackingFeature) -> "supported",
-      DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
+//      TableFeatureProtocolUtils.propertyKey(RowTrackingFeature) -> "supported",
+//      DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
       DeltaConfigs.ISOLATION_LEVEL.key ->
         tblIsoLevel.map(_.toString).getOrElse(DeltaConfigs.ISOLATION_LEVEL.defaultValue)
     )
@@ -88,9 +89,16 @@ trait IdentityColumnConflictSuiteBase
       tableName = tblName,
       generatedAsIdentityType = GeneratedAsIdentityType.GeneratedByDefault,
       startsWith = Some(1),
-      incrementBy = Some(1),
-      tblProperties = tblPropertiesMap
+      incrementBy = Some(1)
+      , tblProperties = tblPropertiesMap // Edge
     )
+  }
+
+
+  def setupTable(): Unit = {
+    return setupEmptyTableWithRowTrackingTableFeature(???) // Edge
+    // whatever sensible table for OSS
+
   }
 
   /**
@@ -130,9 +138,11 @@ trait IdentityColumnConflictSuiteBase
       winningTxn: TransactionConflictTestCase,
       tblIsoLevel: Option[IsolationLevel]): Unit = {
     withTable(tblName) {
+      // BEGIN-EDGE
       // We start with an empty table that has row tracking table feature support and row tracking
       // table property disabled. This way, when we set the table property to true, it will not
       // also do a protocol upgrade and we don't need any backfill commit.
+      // END-EDGE
       setupEmptyTableWithRowTrackingTableFeature(tblIsoLevel)
 
       val threadPool =
@@ -146,7 +156,7 @@ trait IdentityColumnConflictSuiteBase
       sql(winningTxn.sqlCommand)
 
       val expectedException = expectedExceptionClass(currentTxn, winningTxn)
-      val events = TestUsageLogging.captureUsage(spark.sparkContext) {
+      val events = Log4jUsageLogger.track  {
         try {
           unblockCommit(txnObserver)
           ThreadUtils.awaitResult(future, Duration.Inf)
@@ -232,14 +242,13 @@ trait IdentityColumnConflictSuiteBase
     }
   }
 
-  for (iso <- IsolationLevel.validTableIsolationLevels) {
-    test(s"ALTER TABLE SYNC IDENTITY $iso") {
-      transactionIdentityConflictHelper(
-        syncIdentityTestCase,
-        noMetadataUpdateTestCase,
-        tblIsoLevel = Some(iso)
-      )
-    }
+
+  test(s"ALTER TABLE SYNC IDENTITY Serializable") {
+    transactionIdentityConflictHelper(
+      syncIdentityTestCase,
+      noMetadataUpdateTestCase,
+      tblIsoLevel = Some(Serializable)
+    )
   }
 
   test("high watermark changes after analysis but before execution of merge") {

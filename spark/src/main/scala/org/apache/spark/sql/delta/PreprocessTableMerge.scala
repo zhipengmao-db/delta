@@ -42,20 +42,20 @@ import org.apache.spark.sql.types.{DataType, DateType, StringType, StructField, 
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
-  // A mapping from the identity column struct field to the GenerateIdentityColumnValues expression
-  // for the target table in the MERGE clause. FIXME
-  private val identityColumnExpressionMap = mutable.Map[StructField, Expression]()
 
-  // Column names for which we need to track IDENTITY high water marks.
-  private var trackHighWaterMarks = Set[String]()
-
-  def getTrackHighWaterMarks: Set[String] = trackHighWaterMarks
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case m: DeltaMergeInto if m.resolved => apply(m, true)
   }
 
   def apply(mergeInto: DeltaMergeInto, transformToCommand: Boolean): LogicalPlan = {
+    var trackHighWaterMarks = Set[String]()
+
+    // A mapping from the identity column struct field to
+    // the GenerateIdentityColumnValues expression
+    // for the target table in the MERGE clause.
+    val identityColumnExpressionMap = mutable.Map[StructField, Expression]()
+
     val DeltaMergeInto(
       target,
       source,
@@ -176,7 +176,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         actions,
         source,
         generatedColumns.map(f => (f, true)) ++ additionalColumns.map(f => (f, false)),
-        postEvolutionTargetSchema)
+        postEvolutionTargetSchema,
+        identityColumnExpressionMap)
 
       trackHighWaterMarks ++= trackFromInsert
 
@@ -228,7 +229,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           processedNotMatchedBySource,
           migratedSchema = finalSchemaOpt,
           schemaEvolutionEnabled = withSchemaEvolution,
-          getTrackHighWaterMarks),
+          trackHighWaterMarks),
         now)
     } else {
       DeltaMergeInto(
@@ -412,7 +413,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     allActions: Seq[DeltaMergeAction],
     sourcePlan: LogicalPlan,
     columnWithDefaultExpr: Seq[(StructField, Boolean)],
-    postEvolutionTargetSchema: StructType): (Seq[DeltaMergeAction], Set[String]) = {
+    postEvolutionTargetSchema: StructType,
+    identityColumnExpressionMap: mutable.Map[StructField, Expression])
+      : (Seq[DeltaMergeAction], Set[String]) = {
     val implicitColumns = columnWithDefaultExpr.filter {
       case (field, _) =>
         !explicitActions.exists { insertAct =>
