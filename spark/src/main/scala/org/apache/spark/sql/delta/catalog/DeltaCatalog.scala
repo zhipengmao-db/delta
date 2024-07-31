@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBy
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.ColumnWithDefaultExprUtils
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
@@ -107,6 +108,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }.toMap
     val (partitionColumns, maybeBucketSpec, maybeClusterBySpec) = convertTransforms(partitions)
     validateClusterBySpec(maybeClusterBySpec, schema)
+    // Check partition columns are not IDENTITY columns.
+    partitionColumns.foreach { colName =>
+      if (ColumnWithDefaultExprUtils.isIdentityColumn(schema(colName))) {
+        throw DeltaErrors.identityColumnPartitionNotSupported(colName)
+      }
+    }
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec

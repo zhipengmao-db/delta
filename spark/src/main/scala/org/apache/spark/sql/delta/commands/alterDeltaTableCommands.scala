@@ -774,6 +774,15 @@ case class AlterTableChangeColumnDeltaCommand(
       originalField: StructField,
       resolver: Resolver,
       txn: OptimisticTransaction): Unit = {
+    if (ColumnWithDefaultExprUtils.isIdentityColumn(originalField)) {
+      if (originalField.name != newColumn.name ||
+        originalField.dataType != newColumn.dataType ||
+        originalField.nullable != newColumn.nullable ||
+        // Allow comment-only updates
+        originalField.withComment("").metadata != newColumn.withComment("").metadata) {
+          throw DeltaErrors.identityColumnAlterColumnNotSupported()
+      }
+    }
 
     originalField.dataType match {
       case same if same == newColumn.dataType =>
@@ -879,6 +888,10 @@ case class AlterTableReplaceColumnsDeltaCommand(
 
       val metadata = txn.metadata
       val existingSchema = metadata.schema
+
+      if (ColumnWithDefaultExprUtils.hasIdentityColumn(table.initialSnapshot.schema)) {
+        throw DeltaErrors.identityColumnReplaceColumnsNotSupported()
+      }
 
       val resolver = sparkSession.sessionState.conf.resolver
       val changingSchema = StructType(columns)
